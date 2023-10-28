@@ -87,6 +87,7 @@ int main(int argc, char *argv[])
     {
         // Parent process that is the SHELL process.
         wait(NULL); // wait for the child process
+        wait(NULL); // wait for the child process
         printf("I’m SHELL process, with PID: %d - execution is completed, you can find the results in output.txt\n", getpid());
     }
     return 0;
