@@ -124,9 +124,19 @@ int main(int argc, char *argv[])
         int isBackground = 0;
         // Get first arg from line
         arg = strtok(line, " ");
-        if (arg == "wait")
+        if (strcmp(arg, "wait") == 0)
         {
-            // TODO: wait operation
+            int t = 0;
+            for (t = 0; t < numThreads; t++)
+            {
+                pthread_join(threads[t], NULL);
+            }
+            int p;
+            for (p = 0; p < numForks; p++)
+            {
+                int status;
+                waitpid(childPIDs[p], &status, 0);
+            }
             continue;
         }
         // Iterate over arguments and save them
@@ -295,11 +305,11 @@ int main(int argc, char *argv[])
     {
         pthread_join(threads[t], NULL);
     }
-    int s;
-    for (s = 0; s < numForks; s++)
+    int p;
+    for (p = 0; p < numForks; p++)
     {
         int status;
-        waitpid(childPIDs[s], &status, 0);
+        waitpid(childPIDs[p], &status, 0);
     }
     // Close the files
     closePipes(numPipes, &pipes);
