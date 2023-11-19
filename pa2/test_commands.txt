@@ -1,0 +1,8 @@
+ls > ls_output.txt
+ls -a > lsa_output.txt &
+wc cli.c &
+ls
+ls -a &
+ls -a &
+wc cli.c
+ls -a &
