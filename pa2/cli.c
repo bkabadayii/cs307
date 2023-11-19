@@ -6,42 +6,84 @@
 #include <pthread.h>
 #include <fcntl.h>
 
-/*
-// Structure to hold information for each thread
-struct ThreadInfo {
-    FILE *pipe;
-    pthread_t thread_id;
-};
-*/
-
 // Mutex for synchronization
 pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 
-// Thread function that will handle different processes' outputs
-void *handleOutput(void *args) {
-    struct FILE *threadPipe = (FILE *)args;
-    char buffer[100];
-
-    // Read from the pipe until it is closed
-    while (fgets(buffer, sizeof(buffer), threadPipe) != NULL) {
-        // Lock
-        pthread_mutex_lock(&mutex);
-        // Print statements
-        printf("Thread %lu: %s", pthread_self(), buffer);
-        // Unlock
-        pthread_mutex_unlock(&mutex);
+int countLines(char *fname)
+{
+    FILE *file = fopen(fname, "r");
+    int lineCount = 0;
+    char line[256];
+    while (fgets(line, sizeof(line), file))
+    {
+        lineCount++;
     }
+    fclose(file);
+    return lineCount;
+}
+
+// Thread function that will handle different processes' outputs
+void *handleOutput(void *args)
+{
+    int *pipe_fd = (int *)args;
+    close(pipe_fd[1]);
+
+    FILE *threadPipe = fdopen(pipe_fd[0], "r");
+
+    char buffer[100];
+    // Lock
+    pthread_mutex_lock(&mutex);
+    // Read from the pipe until it is closed
+    printf("---- %lu\n", pthread_self());
+    while (fgets(buffer, sizeof(buffer), threadPipe))
+    {
+        printf("%s", buffer);
+    }
+    printf("---- %lu\n", pthread_self());
+    fsync(STDOUT_FILENO);
+    // Unlock
+    pthread_mutex_unlock(&mutex);
     return NULL;
 }
 
+// Initalize pipes
+void createPipes(int n, int ***pipes)
+{
+    *pipes = (int **)(malloc(sizeof(int *) * n));
+    int i;
+    for (i = 0; i < n; i++)
+    {
+        (*pipes)[i] = (int *)(malloc(sizeof(int) * 2));
+        pipe((*pipes)[i]);
+    }
+}
+
+// Free pipes
+void closePipes(int n, int ***pipes)
+{
+    int i;
+    for (i = 0; i < n; i++)
+    {
+        close((*pipes)[i][0]);
+        close((*pipes)[i][1]);
+        free((*pipes)[i]);
+    }
+
+    free(*pipes);
+}
 
 int main(int argc, char *argv[])
 {
-    // Read the commands.txt file
-    FILE *file = fopen("test_commands.txt", "r");
+    char *commandsFileName = "test_commands.txt";
+    // Max number of child processes will be numLines
+    int numLines = countLines(commandsFileName);
+    // Open commands.txt and parse.txt files
+    FILE *commandsFile = fopen(commandsFileName, "r");
+    FILE *parseFile = fopen("parse.txt", "w");
 
-    // Check if the file was opened successfully
-    if (file == NULL) {
+    // Check if the files were opened successfully
+    if (commandsFile == NULL || parseFile == NULL)
+    {
         perror("Error opening file");
         return 1;
     }
@@ -50,73 +92,162 @@ int main(int argc, char *argv[])
     char line[256];
 
     // To iterate over arguments
-    char* arg;
+    char *arg;
     // Array to store arguments
     char *execArgs[6];
-    
+    // Arrays to store child process / thread / pipe info
+    int childPIDs[numLines];
+    pthread_t threads[numLines];
+    int **pipes;
+    createPipes(numLines, &pipes);
+
     // Read each line until the end of the file
-    while (fgets(line, sizeof(line), file))
+    int numForks = 0;
+    int numPipes = 0;
+    int numThreads = 0;
+    while (fgets(line, sizeof(line), commandsFile))
     {
         // If \n exists at the end, get rid of it
         int lineLength = strlen(line);
-        if (lineLength > 0 && line[lineLength - 1] == '\n') {
+        if (lineLength > 0 && line[lineLength - 1] == '\n')
+        {
             line[lineLength - 1] = '\0'; // Replace with null char
         }
-        
+
+        // Variables to store indexes of arguments
         int inRedirect = 0;
-        int outRedirect = 0;    
-        int isBackground = 0;    
+        int outRedirect = 0;
+        int options = 0;
+        int isBackground = 0;
         // Get first arg from line
         arg = strtok(line, " ");
-        if (arg == "wait") {
+        if (arg == "wait")
+        {
             // TODO: wait operation
             continue;
         }
         // Iterate over arguments and save them
         int i = 0;
-        while( arg != NULL ) {
+        while (arg != NULL)
+        {
             // If an argument is redirection set redirection
-            if (arg[0] == '>') {
+            if (arg[0] == '>')
+            {
                 outRedirect = i;
             }
-            else if (arg[0] == '<') {
+            else if (arg[0] == '<')
+            {
                 inRedirect = i;
             }
-
+            else if (arg[0] == '-')
+            {
+                options = i;
+            }
             execArgs[i] = arg;
-            
             // Continue with next argument
             arg = strtok(NULL, " ");
             i++;
         }
-        // Set last argument as NULL
-        execArgs[i] = NULL;
+
         // Check if background job
-        if (execArgs[i - 1][0] == '&') {
+        if (execArgs[i - 1][0] == '&')
+        {
             isBackground = 1;
         }
+        // int fd[2];
 
-        // If has redirect
-        if (outRedirect) {
-            int rc = fork();
-            if (rc < 0) {
-                printf("Fork failed!\n");
+        // Prepare a pipe if command does not have output redirection
+
+        if (!outRedirect)
+        {
+            /*
+            int piped = pipe(fd);
+            if (piped < 0)
+            {
+                printf("Piping failed!\n");
                 exit(1);
             }
-            else if (rc > 0) {
-                // Parent process
-                if (!isBackground) {
-                    // If created job is background, wait for that job to terminate
-                    int status;
-                    waitpid(rc, &status, 0);
-                }
+            pipes[numPipes] = fd;
+            */
+            numPipes++;
+        }
+
+        int rc = fork();
+        if (rc < 0)
+        {
+            printf("Fork failed!\n");
+            exit(1);
+        }
+        else if (rc > 0)
+        {
+            // Parent process
+            childPIDs[numForks] = (int)rc;
+            // Create a thread if command does not have output redirection
+            if (!outRedirect)
+            {
+                pthread_create(&threads[numThreads], NULL, handleOutput, pipes[numPipes - 1]);
+                numThreads++;
             }
-            else {
-                // Child process
-                char* outputFile = execArgs[outRedirect + 1];
+
+            fprintf(parseFile, "----------\n");
+            fprintf(parseFile, "Command: %s\n", execArgs[0]);
+            if (options != 1 && inRedirect != 1 && outRedirect != 1 && ((isBackground && i - 1 != 1) || (!isBackground && i != 1)))
+            {
+                fprintf(parseFile, "Inputs: %s\n", execArgs[1]);
+            }
+            else
+            {
+                fprintf(parseFile, "Inputs:\n");
+            }
+            if (options)
+            {
+                fprintf(parseFile, "Options: %s\n", execArgs[options]);
+            }
+            else
+            {
+                fprintf(parseFile, "Options:\n");
+            }
+            if (inRedirect)
+            {
+                fprintf(parseFile, "Redirection: <\n");
+            }
+            else if (outRedirect)
+            {
+                fprintf(parseFile, "Redirection: >\n");
+            }
+            else
+            {
+                fprintf(parseFile, "Redirection: -\n");
+            }
+            if (isBackground)
+            {
+                fprintf(parseFile, "Background Job: y\n");
+            }
+            else
+            {
+                fprintf(parseFile, "Background Job: n\n");
+            }
+            fprintf(parseFile, "----------\n");
+
+            numForks++;
+            // If created job is not background, wait for that job to terminate
+            if (!isBackground)
+            {
+                int status;
+                waitpid(rc, &status, 0);
+            }
+        }
+        else
+        {
+            // Child process
+            // If command has output redirection, no thread will be created
+            if (outRedirect)
+            {
+                char *outputFile = execArgs[outRedirect + 1];
                 // Redirect STDOUT to file
                 int output_fd = open(outputFile, O_WRONLY | O_CREAT | O_TRUNC, 0644);
-                if (output_fd == -1) {
+                if (output_fd == -1)
+                {
                     printf("Error redirecting STDOUT!\n");
                     exit(1);
                 }
@@ -125,35 +256,43 @@ int main(int argc, char *argv[])
 
                 // Set last arg as NULL
                 execArgs[outRedirect] = NULL;
-                // Execute command
-                execvp(execArgs[0], execArgs);
             }
-        }
-        // Does not have redirect: threads will handle outputs
-        else {
-            // Prepare pipe
-            int pipe_fd[2];
-            int piped = pipe(pipe_fd);
-            if (piped < 0)
+            // If the command has no output redirction, redirect STDOUT to pipe
+            else
             {
-                printf("Piping failed!\n");
-                exit(1);
+                dup2(pipes[numPipes - 1][1], STDOUT_FILENO);
+                close(pipes[numPipes - 1][0]);
+                close(pipes[numPipes - 1][1]);
+
+                // Set last arg as NULL
+                if (isBackground)
+                {
+                    execArgs[i - 1] = NULL;
+                }
+                else
+                {
+                    execArgs[i] = NULL;
+                }
             }
+            // Execute command
+            execvp(execArgs[0], execArgs);
         }
-        /*
-        int j = 0;
-        for (j = 0; j < i; j++) {
-            printf("%s ", execArgs[j]);
-        }
-        if (outRedirect) {
-            printf("Has redirect");
-        }
-        printf("\n");
-        */
     }
-    wait(NULL);
-    wait(NULL);
-    // Close the file
-    fclose(file);
+
+    int t = 0;
+    for (t = 0; t < numThreads; t++)
+    {
+        pthread_join(threads[t], NULL);
+    }
+    int s;
+    for (s = 0; s < numForks; s++)
+    {
+        int status;
+        waitpid(childPIDs[s], &status, 0);
+    }
+    // Close the files
+    closePipes(numPipes, &pipes);
+    fclose(commandsFile);
+    fclose(parseFile);
     return 0;
 }
