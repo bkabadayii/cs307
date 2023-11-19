@@ -6,6 +6,9 @@
 #include <pthread.h>
 #include <fcntl.h>
 
+#define COMMANDS "commands.txt"
+#define PARSE "parse.txt"
+
 // Mutex for synchronization
 pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 
@@ -74,12 +77,11 @@ void closePipes(int n, int ***pipes)
 
 int main(int argc, char *argv[])
 {
-    char *commandsFileName = "test_commands.txt";
     // Max number of child processes will be numLines
-    int numLines = countLines(commandsFileName);
+    int numLines = countLines(COMMANDS);
     // Open commands.txt and parse.txt files
-    FILE *commandsFile = fopen(commandsFileName, "r");
-    FILE *parseFile = fopen("parse.txt", "w");
+    FILE *commandsFile = fopen(COMMANDS, "r");
+    FILE *parseFile = fopen(PARSE, "w");
 
     // Check if the files were opened successfully
     if (commandsFile == NULL || parseFile == NULL)
@@ -95,9 +97,10 @@ int main(int argc, char *argv[])
     char *arg;
     // Array to store arguments
     char *execArgs[6];
-    // Arrays to store child process / thread / pipe info
+    // Arrays to store child processes / threads
     int childPIDs[numLines];
     pthread_t threads[numLines];
+    // Initialize pipes
     int **pipes;
     createPipes(numLines, &pipes);
 
@@ -154,25 +157,14 @@ int main(int argc, char *argv[])
         {
             isBackground = 1;
         }
-        // int fd[2];
-
-        // Prepare a pipe if command does not have output redirection
 
         if (!outRedirect)
         {
-            /*
-            int piped = pipe(fd);
-            if (piped < 0)
-            {
-                printf("Piping failed!\n");
-                exit(1);
-            }
-            pipes[numPipes] = fd;
-            */
             numPipes++;
         }
 
         int rc = fork();
+        numForks++;
         if (rc < 0)
         {
             printf("Fork failed!\n");
@@ -229,7 +221,6 @@ int main(int argc, char *argv[])
             }
             fprintf(parseFile, "----------\n");
 
-            numForks++;
             // If created job is not background, wait for that job to terminate
             if (!isBackground)
             {
@@ -264,14 +255,34 @@ int main(int argc, char *argv[])
                 close(pipes[numPipes - 1][0]);
                 close(pipes[numPipes - 1][1]);
 
-                // Set last arg as NULL
-                if (isBackground)
+                // If command has input redirection, redirect STDIN to file
+                if (inRedirect)
                 {
-                    execArgs[i - 1] = NULL;
+                    char *inputFile = execArgs[inRedirect + 1];
+                    // Redirect STDOUT to file
+                    int input_fd = open(inputFile, O_RDONLY);
+                    if (input_fd == -1)
+                    {
+                        printf("Error redirecting STDIN!\n");
+                        exit(1);
+                    }
+                    dup2(input_fd, STDIN_FILENO);
+                    close(input_fd);
+
+                    // Set last arg as NULL
+                    execArgs[inRedirect] = NULL;
                 }
                 else
                 {
-                    execArgs[i] = NULL;
+                    // Set last arg as NULL
+                    if (isBackground)
+                    {
+                        execArgs[i - 1] = NULL;
+                    }
+                    else
+                    {
+                        execArgs[i] = NULL;
+                    }
                 }
             }
             // Execute command
