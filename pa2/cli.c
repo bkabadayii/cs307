@@ -122,10 +122,14 @@ int main(int argc, char *argv[])
         int outRedirect = 0;
         int options = 0;
         int isBackground = 0;
+        char *input = "";
+        char *option = "";
+        char *command = "";
         // Get first arg from line
         arg = strtok(line, " ");
         if (strcmp(arg, "wait") == 0)
         {
+            fprintf(parseFile, "----------\nCommand: wait\nInputs:\nOptions:\nRedirection: -\nBackground Job: n\n----------\n");
             int t = 0;
             for (t = 0; t < numThreads; t++)
             {
@@ -143,8 +147,15 @@ int main(int argc, char *argv[])
         int i = 0;
         while (arg != NULL)
         {
+            char *temp;
+            char *freeEscaped;
+            temp = strdup(arg);
             // If an argument is redirection set redirection
-            if (arg[0] == '>')
+            if (i == 0)
+            {
+                command = arg;
+            }
+            else if (arg[0] == '>')
             {
                 outRedirect = i;
             }
@@ -152,14 +163,54 @@ int main(int argc, char *argv[])
             {
                 inRedirect = i;
             }
-            else if (arg[0] == '-')
+            else if (arg[0] == '-' && strcmp(option, "") == 0)
             {
                 options = i;
+                option = arg;
             }
-            execArgs[i] = arg;
+            else if (arg[0] == '-' && strcmp(option, "") != 0)
+            {
+                // If argument starts with '-' and option is already set,
+                // set it as input and escape with '\\' (there cannot be 2 options)
+                input = arg;
+                size_t newLen = strlen(temp) + 2;
+                char *escaped = (char *)malloc(newLen);
+
+                if (escaped == NULL)
+                {
+                    printf("MEMORY ALLOCATION FAILED!\n");
+                    exit(1);
+                }
+                sprintf(escaped, "%s%s", "\\", temp);
+                temp = escaped;
+            }
+            else if (!outRedirect && !inRedirect && strcmp(arg, "&") != 0)
+            {
+                input = arg;
+            }
+            execArgs[i] = temp;
             // Continue with next argument
             arg = strtok(NULL, " ");
             i++;
+        }
+
+        // At the end, if command is grep and no input is provided:
+        // Set option as the input because there must be an input for grep.
+        if (strcmp(command, "grep") == 0 && strcmp(input, "") == 0)
+        {
+            input = option;
+            size_t newLen = strlen(option) + 2;
+            char *escaped = (char *)malloc(newLen);
+
+            if (escaped == NULL)
+            {
+                printf("MEMORY ALLOCATION FAILED!\n");
+                exit(1);
+            }
+            sprintf(escaped, "%s%s", "\\", option);
+
+            option = "";
+            execArgs[options] = escaped;
         }
 
         // Check if background job
@@ -193,22 +244,9 @@ int main(int argc, char *argv[])
 
             fprintf(parseFile, "----------\n");
             fprintf(parseFile, "Command: %s\n", execArgs[0]);
-            if (options != 1 && inRedirect != 1 && outRedirect != 1 && ((isBackground && i - 1 != 1) || (!isBackground && i != 1)))
-            {
-                fprintf(parseFile, "Inputs: %s\n", execArgs[1]);
-            }
-            else
-            {
-                fprintf(parseFile, "Inputs:\n");
-            }
-            if (options)
-            {
-                fprintf(parseFile, "Options: %s\n", execArgs[options]);
-            }
-            else
-            {
-                fprintf(parseFile, "Options:\n");
-            }
+            fprintf(parseFile, "Inputs: %s\n", input);
+            fprintf(parseFile, "Options: %s\n", option);
+
             if (inRedirect)
             {
                 fprintf(parseFile, "Redirection: <\n");
@@ -300,6 +338,7 @@ int main(int argc, char *argv[])
         }
     }
 
+    // Wait for all threads and processes before terminating
     int t = 0;
     for (t = 0; t < numThreads; t++)
     {
