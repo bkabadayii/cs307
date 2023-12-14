@@ -1,10 +1,8 @@
 #include <stdio.h>
 #include <string.h>
-#include <sys/wait.h>
 #include <stdlib.h>
 #include <unistd.h>
 #include <pthread.h>
-#include <fcntl.h>
 #include <semaphore.h>
 
 // Fan type: 0 = A, 1 = B
@@ -25,37 +23,44 @@ struct car
     }
 };
 
+// Class handling the program flow and synchronization
 class SynchronizationMechanism {
 public:
     int NUM_GROUPS;
+    int CAR_ID;
+
     sem_t * groupCheckSync; // Will be used as a lock when checking group availability
     sem_t * carWaitSync; // Will be used as a barrier when waiting others to complete the group
-    sem_t * carReadySync; // Will be used as a lock when getting in the car
-    sem_t * driveSync; // Will be used as a barrier when waiting others to get in the car
 
-    car* carInfo; // Will be used to keep the cars information
+    sem_t captainLock; // Will be used as a lock for car groups' output to be consecutive
+    sem_t getIntoCarLock; // Will be used as a lock when getting in the car
+    sem_t fanWait; // Will be used as a barrier when waiting others to get in the car
+
+    car* carInfo; // Will be used to keep the cars2 information
 
     // Initializes synchronization mechanism
     void initSynchronizationMechanism (int numGroups) {
         NUM_GROUPS = numGroups;
+        CAR_ID = 0;
 
         groupCheckSync = new sem_t[numGroups];
         carWaitSync = new sem_t[numGroups];
-        carReadySync = new sem_t[numGroups];
-        driveSync = new sem_t[numGroups];
         carInfo = new car[numGroups];
 
         for (int i = 0; i < numGroups; i++) {
             sem_init(&groupCheckSync[i], 0, 1); 
             sem_init(&carWaitSync[i], 0, 0);
-            sem_init(&carReadySync[i], 0, 1);
-            sem_init(&driveSync[i], 0, 0);
         }
+
+        sem_init(&captainLock, 0, 1);
+        sem_init(&getIntoCarLock, 0, 1);  
+        sem_init(&fanWait, 0, 0);        
     }
 
     // Checks group availability for a fan
     // If group is available for the fan, the fan reserves a spot in that group's car
-    bool checkAndReserveGroup(int groupIdx, int fanType) {
+    // If the fan is the last one reserving the car, set them as the captain
+    bool checkAndReserveGroup(int groupIdx, int fanType, bool &isCaptain) {
         bool check = true;
         // Acquire lock when checking
         sem_wait(&(groupCheckSync[groupIdx]));
@@ -75,7 +80,6 @@ public:
                 check = false;
             }
             else if (numFansA > 1 && numFansB > 0) {
-                printf("Check fail!\n");
                 check = false;
             }
         }
@@ -95,6 +99,10 @@ public:
         // Reserve a spot in the group if available
         if (check) {
             carInfo[groupIdx].numFans[fanType]++;
+            // If the fan is the last one, set them is the captain 
+            if (carInfo[groupIdx].numFans[0] + carInfo[groupIdx].numFans[1] == 4) {
+                isCaptain = true;
+            }
         }
 
         // Release lock
@@ -102,13 +110,58 @@ public:
         return check;
     }
 
+    // Waits for a group to complete
+    // When captain arrives, all fans are are awaken and they get into the car
+    void waitAndGetIntoCar (int groupIdx, char team, bool isCaptain) {
+        // If a fan is not the captain
+        if (!isCaptain) {
+            // Wait for captain to arrive
+            sem_wait(&(carWaitSync[groupIdx]));
+
+            // After captain arrives, acquire lock and get into the car
+            sem_wait(&getIntoCarLock);
+            carInfo[groupIdx].inCar++;
+            printf("Thread ID: %lu, Team: %c, I have found a spot in a car\n", pthread_self(), team);
+            fsync(STDOUT_FILENO);
+            // If the fan is last one getting into the car, awake others
+            if (carInfo[groupIdx].inCar == 4) {
+                sem_post(&fanWait);
+                sem_post(&fanWait);
+                sem_post(&fanWait);
+                sem_post(&fanWait);
+            }
+            sem_post(&getIntoCarLock);
+            // Wait for everyone to get into the car
+            sem_wait(&fanWait);
+        }
+        // If a fan is the captain
+        else {
+            // Get into the car
+            carInfo[groupIdx].inCar++;
+            // Acquire captain lock to block other groups from printing
+            sem_wait(&captainLock);
+            printf("Thread ID: %lu, Team: %c, I have found a spot in a car\n", pthread_self(), team);
+            fsync(STDOUT_FILENO);
+
+            // Send signal to other fans to get into car
+            sem_post(&(carWaitSync[groupIdx]));
+            sem_post(&(carWaitSync[groupIdx]));
+            sem_post(&(carWaitSync[groupIdx]));
+
+            // Wait for everyone to get into the car
+            sem_wait(&fanWait);
+            printf("Thread ID: %lu, Team: %c, I am the captain and driving the car with ID %i\n", pthread_self(), team, CAR_ID);
+            fsync(STDOUT_FILENO);
+            CAR_ID++;
+            // Release captain lock 
+            sem_post(&captainLock);
+        }
+    }
+
     // Destructor to free dynamic memory
     ~SynchronizationMechanism() {
-        // Destroy semaphores in the destructor
         delete[] groupCheckSync;
         delete[] carWaitSync;
-        delete[] carReadySync;
-        delete[] driveSync;
         delete[] carInfo;
     }
 
@@ -139,11 +192,17 @@ void *fanThread(void *args)
     }
     printf("Thread ID: %lu, Team: %c, I am looking for a car\n", pthread_self(), team);
 
+    // Iterate over groups to reserve a car 
     for (int i = 0; i < synchronizationMechanism.NUM_GROUPS; i++) {
-        bool reserved = synchronizationMechanism.checkAndReserveGroup(i, fanType);   
-        if (reserved) {
-            break;
+        bool isCaptain = false;
+        bool reserved = synchronizationMechanism.checkAndReserveGroup(i, fanType, isCaptain);   
+        // If reserve is not successful, look for the next group
+        if (!reserved) {
+            continue;
         }
+        // Wait for group to form and then get into car
+        synchronizationMechanism.waitAndGetIntoCar(i, team, isCaptain);
+        break;
     }
 }
 
@@ -187,7 +246,6 @@ int main(int argc, char *argv[])
         pthread_join(fanThreads[t], NULL);
     }
 
-    // synchronizationMechanism.printAllCars();
     printf("The main terminates\n");
     return 0;
 }
