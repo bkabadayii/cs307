@@ -1,0 +1,35 @@
+----------
+Command: grep
+Inputs: danger
+Options: 
+Redirection: <
+Background Job: y
+----------
+----------
+Command: wait
+Inputs:
+Options:
+Redirection: -
+Background Job: n
+----------
+----------
+Command: ls
+Inputs: 
+Options: -l
+Redirection: -
+Background Job: y
+----------
+----------
+Command: wc
+Inputs: cli.c
+Options: 
+Redirection: >
+Background Job: y
+----------
+----------
+Command: grep
+Inputs: Skyler
+Options: 
+Redirection: <
+Background Job: y
+----------

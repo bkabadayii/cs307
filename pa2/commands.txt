@@ -1,6 +1,5 @@
 grep danger < input1.txt &
 wait
-ls -a &
-wc cli.c > output1.txt
-wait
-grep clearly -i < input1.txt &
+ls -l &
+wc cli.c > output1.txt &
+grep Skyler < input1.txt &
