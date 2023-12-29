@@ -79,21 +79,97 @@ class HeapManager {
             return allocatedIndex;
         }
 
+        // Frees an allocated memory if it exists
+        // Returns 1 if free succeeds
+        // Returns -1 otherwise
+        int myFree(int ID, int index) {
+            HeapNode* temp = head;
+            HeapNode* prev = NULL;
+            // Iterate over all chunks
+            int isFreed = -1;
+            while (temp != NULL && isFreed == -1) {
+                // If current chunk's id and index is equal to given values, perform free operation
+                if (temp -> id == ID && temp -> index == index) {
+                    // Check if left and right chunks are empty
+                    bool leftEmpty = false;
+                    bool rightEmpty = false;
+                    if (prev && prev -> id == -1) {
+                        leftEmpty = true;
+                    }
+                    if (temp -> next && temp -> next -> id == -1) {
+                        rightEmpty = true;
+                    }
+
+                    // If left chunk is empty, destroy other empty chunks and combine their information with the left chunk
+                    if (leftEmpty) {
+                        HeapNode* connection = temp -> next;
+                        int newSize = prev -> size + temp -> size;
+                        // If right chunk is also empty, increment newSize by its size and shift connection to right
+                        if (rightEmpty) {
+                            connection = connection -> next;
+                            newSize += temp -> next -> size;
+                            // Destroy right chunk
+                            delete temp -> next;
+                        }
+                        // Destroy current chunk
+                        delete temp;
+                        // Update left chunks information
+                        prev -> id = -1;
+                        prev -> size = newSize;
+                        prev -> next = connection;
+                    }
+                    // Else, keep current chunk and destroy right chunk (if empty) and combine its information with the current chunk
+                    else {
+                        HeapNode* connection = temp -> next;
+                        int newSize = temp -> size;
+                        // If right chunk is empty, increment newSize by its size and shift connection to right
+                        if (rightEmpty) {
+                            connection = connection -> next;
+                            newSize += temp -> next -> size;
+                            // Destroy right chunk
+                            delete temp -> next;
+                        }
+                        // Update current chunks information
+                        temp -> id = -1;
+                        temp -> size = newSize;
+                        temp -> next = connection;
+                    }
+                    isFreed = 1;
+                    break;
+                }
+                prev = temp;
+                temp = temp -> next;
+            }
+            if (isFreed) {
+                printf("Freed for thread %i\n", ID);
+            }
+            else {
+                printf("Free failed for thread %i\n", ID);
+            }
+            print();
+            return isFreed;
+        }
+
 };
 
+// TEMP MAIN
 HeapManager heapManager;
 
-// TEMP MAIN
 int main() {
     int val = heapManager.initHeap(100);
     heapManager.myMalloc(0, 40);
     heapManager.myMalloc(0, 20);
     heapManager.myMalloc(0, 30);
-    heapManager.myMalloc(0, 11);
     heapManager.myMalloc(0, 6);
     heapManager.myMalloc(0, 4);
-    heapManager.myMalloc(0, 8);
 
+    heapManager.myFree(0, 60);
+    heapManager.myFree(0, 40);
+    heapManager.myFree(0, 96);
+
+    heapManager.myMalloc(0, 23);
+    heapManager.myMalloc(0, 24);
+    heapManager.myMalloc(0, 4);
     printf("Execution is done\n");
     heapManager.print();
     return 0;
