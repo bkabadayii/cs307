@@ -21,16 +21,9 @@ struct HeapNode {
 
 class HeapManager {
     private:
-        // Head of the linked list
-        HeapNode* head;
+        HeapNode* head; // Head of the linked list
+        sem_t memLock; // Lock for memory management
     public:
-        // Heap initializer 
-        int initHeap(int size) {
-            printf("Memory initialized\n");
-            head = new HeapNode(-1, size, 0);
-            return 1;
-        }
-
         // Prints the current state of the heap
         void print() {
             HeapNode* temp = head;
@@ -45,13 +38,24 @@ class HeapManager {
             printf("\n");
         }
 
+        // Heap initializer 
+        int initHeap(int size) {
+            printf("Memory initialized\n");
+            head = new HeapNode(-1, size, 0);
+            sem_init(&memLock, 0, 1);
+            print();
+            return 1;
+        }
+
         // Allocates memory from the heap if there is a free chunk with enough size
         // Returns index of the chunk allocated if allocation succeeds
         // Returns -1 otherwise
         int myMalloc(int ID, int size) {
+            int allocatedIndex = -1;
+            // Lock memLock before checking
+            sem_wait(&memLock);
             HeapNode* temp = head;
             // Iterate over all chunks
-            int allocatedIndex = -1;
             while (temp != NULL && allocatedIndex == -1) {
                 // If current chunk is free and its size >= requested size, allocate memory from that chunk
                 if (temp -> id == -1 && temp -> size >= size) {
@@ -76,6 +80,8 @@ class HeapManager {
                 printf("Can not allocate, requested size %i for thread %i is bigger than remaining size\n", size, ID);
             }
             print();
+            // After the operation is done, release the lock
+            sem_post(&memLock);
             return allocatedIndex;
         }
 
@@ -83,10 +89,12 @@ class HeapManager {
         // Returns 1 if free succeeds
         // Returns -1 otherwise
         int myFree(int ID, int index) {
-            HeapNode* temp = head;
             HeapNode* prev = NULL;
             // Iterate over all chunks
             int isFreed = -1;
+            // Lock memLock before checking
+            sem_wait(&memLock);
+            HeapNode* temp = head;
             while (temp != NULL && isFreed == -1) {
                 // If current chunk's id and index is equal to given values, perform free operation
                 if (temp -> id == ID && temp -> index == index) {
@@ -147,30 +155,8 @@ class HeapManager {
                 printf("Free failed for thread %i\n", ID);
             }
             print();
+            sem_post(&memLock);
             return isFreed;
         }
 
 };
-
-// TEMP MAIN
-HeapManager heapManager;
-
-int main() {
-    int val = heapManager.initHeap(100);
-    heapManager.myMalloc(0, 40);
-    heapManager.myMalloc(0, 20);
-    heapManager.myMalloc(0, 30);
-    heapManager.myMalloc(0, 6);
-    heapManager.myMalloc(0, 4);
-
-    heapManager.myFree(0, 60);
-    heapManager.myFree(0, 40);
-    heapManager.myFree(0, 96);
-
-    heapManager.myMalloc(0, 23);
-    heapManager.myMalloc(0, 24);
-    heapManager.myMalloc(0, 4);
-    printf("Execution is done\n");
-    heapManager.print();
-    return 0;
-}
